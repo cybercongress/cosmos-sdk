@@ -14,6 +14,7 @@ import (
 	"cosmossdk.io/runtime/v2"
 	"cosmossdk.io/store/v2/root"
 	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
+	_ "github.com/cosmos/cosmos-sdk/x/genutil"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
