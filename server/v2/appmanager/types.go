@@ -40,4 +40,11 @@ type StateTransitionFunction[T transaction.Tx] interface {
 		gasLimit uint64,
 		req transaction.Msg,
 	) (transaction.Msg, error)
+
+	DeliverSims(
+		ctx context.Context,
+		block *server.BlockRequest[T],
+		state store.ReaderMap,
+		simsBuilder func(ctx context.Context) (T, bool),
+	) (blockResult *server.BlockResponse, newState store.WriterMap, err error)
 }

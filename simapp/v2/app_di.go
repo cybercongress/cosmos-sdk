@@ -17,6 +17,7 @@ import (
 	lockupdepinject "cosmossdk.io/x/accounts/defaults/lockup/depinject"
 	multisigdepinject "cosmossdk.io/x/accounts/defaults/multisig/depinject"
 	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
+	_ "github.com/cosmos/cosmos-sdk/x/genutil"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
