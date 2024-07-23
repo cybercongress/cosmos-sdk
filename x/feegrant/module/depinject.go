@@ -7,7 +7,6 @@ import (
 	"cosmossdk.io/depinject/appconfig"
 	"cosmossdk.io/x/feegrant"
 	"cosmossdk.io/x/feegrant/keeper"
-
 	"github.com/cosmos/cosmos-sdk/codec"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
 )
@@ -35,6 +34,6 @@ type FeegrantInputs struct {
 
 func ProvideModule(in FeegrantInputs) (keeper.Keeper, appmodule.AppModule) {
 	k := keeper.NewKeeper(in.Environment, in.Cdc, in.AccountKeeper)
-	m := NewAppModule(in.Cdc, in.AccountKeeper, in.BankKeeper, k, in.Registry)
+	m := NewAppModule(in.Cdc, k, in.Registry)
 	return k, m
 }
