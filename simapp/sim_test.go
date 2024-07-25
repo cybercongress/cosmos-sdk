@@ -60,9 +60,11 @@ func TestFullAppSimulation(t *testing.T) {
 func setupStateFactory(app *SimApp) sims.SimStateFactory {
 	blockedAddre, _ := BlockedAddresses(app.interfaceRegistry.SigningContext().AddressCodec())
 	return sims.SimStateFactory{
-		Codec:       app.AppCodec(),
-		AppStateFn:  simtestutil.AppStateFn(app.AppCodec(), app.AuthKeeper.AddressCodec(), app.StakingKeeper.ValidatorAddressCodec(), app.SimulationManager(), app.DefaultGenesis()),
-		BlockedAddr: blockedAddre,
+		Codec:         app.AppCodec(),
+		AppStateFn:    simtestutil.AppStateFn(app.AppCodec(), app.AuthKeeper.AddressCodec(), app.StakingKeeper.ValidatorAddressCodec(), app.SimulationManager(), app.DefaultGenesis()),
+		BlockedAddr:   blockedAddre,
+		AccountSource: app.AuthKeeper,
+		BalanceSource: app.BankKeeper,
 	}
 }
 
@@ -138,7 +140,9 @@ func TestAppSimulationAfterImport(t *testing.T) {
 					genesisTimestamp := time.Unix(config.GenesisTime, 0)
 					return exported.AppState, acc, config.ChainID, genesisTimestamp
 				},
-				BlockedAddr: BlockedAddresses(),
+				BlockedAddr:   BlockedAddresses(),
+				AccountSource: app.AuthKeeper,
+				BalanceSource: app.BankKeeper,
 			}
 		}
 		sims.RunWithSeed(t, ti.Cfg, NewSimApp, importGenesisStateFactory, ti.Cfg.Seed, ti.Cfg.FuzzSeed)
