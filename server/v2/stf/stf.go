@@ -87,7 +87,7 @@ func (s STF[T]) DeliverSims(
 	state store.ReaderMap,
 	simsBuilder func(ctx context.Context) (T, bool),
 ) (blockResult *server.BlockResponse, newState store.WriterMap, err error) {
-	return s.DeliverBlockY(ctx, block, state, s.DoSimsTXs(simsBuilder))
+	return s.deliverBlock(ctx, block, state, s.DoSimsTXs(simsBuilder))
 }
 
 // DeliverBlock is our state transition function.
@@ -98,7 +98,7 @@ func (s STF[T]) DeliverBlock(
 	block *server.BlockRequest[T],
 	state store.ReaderMap,
 ) (blockResult *server.BlockResponse, newState store.WriterMap, err error) {
-	return s.DeliverBlockY(ctx, block, state, s.doDeliverTXs)
+	return s.deliverBlock(ctx, block, state, s.doDeliverTXs)
 }
 
 type DoInBlockDeliveryFn[T transaction.Tx] func(
@@ -108,7 +108,7 @@ type DoInBlockDeliveryFn[T transaction.Tx] func(
 	hi header.Info,
 ) ([]server.TxResult, error)
 
-func (s STF[T]) DeliverBlockY(
+func (s STF[T]) deliverBlock(
 	ctx context.Context,
 	block *server.BlockRequest[T],
 	state store.ReaderMap,
