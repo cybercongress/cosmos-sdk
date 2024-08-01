@@ -101,7 +101,7 @@ func (s STF[T]) DeliverBlock(
 	return s.deliverBlock(ctx, block, state, s.doDeliverTXs)
 }
 
-type DoInBlockDeliveryFn[T transaction.Tx] func(
+type doInBlockDeliveryFn[T transaction.Tx] func(
 	ctx context.Context,
 	txs []T,
 	newState store.WriterMap,
@@ -112,7 +112,7 @@ func (s STF[T]) deliverBlock(
 	ctx context.Context,
 	block *server.BlockRequest[T],
 	state store.ReaderMap,
-	doInBlockDelivery DoInBlockDeliveryFn[T],
+	doInBlockDelivery doInBlockDeliveryFn[T],
 ) (blockResult *server.BlockResponse, newState store.WriterMap, err error) {
 	// creates a new branchFn state, from the readonly view of the state
 	// that can be written to.
