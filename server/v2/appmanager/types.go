@@ -51,8 +51,8 @@ type StateTransitionFunction[T transaction.Tx] interface {
 
 	DeliverSims(
 		ctx context.Context,
-		block *appmanager.BlockRequest[T],
+		block *server.BlockRequest[T],
 		state store.ReaderMap,
 		simsBuilder func(ctx context.Context) (T, bool),
-	) (blockResult *appmanager.BlockResponse, newState store.WriterMap, err error)
+	) (blockResult *server.BlockResponse, newState store.WriterMap, err error)
 }

@@ -13,11 +13,6 @@ import (
 	"testing"
 	"time"
 
-	abci "github.com/cometbft/cometbft/api/cometbft/abci/v1"
-	cmtproto "github.com/cometbft/cometbft/api/cometbft/types/v1"
-	dbm "github.com/cosmos/cosmos-db"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	corestore "cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	"cosmossdk.io/store"
@@ -26,6 +21,10 @@ import (
 	"cosmossdk.io/x/feegrant"
 	slashingtypes "cosmossdk.io/x/slashing/types"
 	stakingtypes "cosmossdk.io/x/staking/types"
+	abci "github.com/cometbft/cometbft/api/cometbft/abci/v1"
+	cmtproto "github.com/cometbft/cometbft/api/cometbft/types/v1"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
@@ -61,7 +60,7 @@ func setupStateFactory(app *SimApp) sims.SimStateFactory {
 	blockedAddre, _ := BlockedAddresses(app.interfaceRegistry.SigningContext().AddressCodec())
 	return sims.SimStateFactory{
 		Codec:         app.AppCodec(),
-		AppStateFn:    simtestutil.AppStateFn(app.AppCodec(), app.AuthKeeper.AddressCodec(), app.StakingKeeper.ValidatorAddressCodec(), app.SimulationManager(), app.DefaultGenesis()),
+		AppStateFn:    simtestutil.AppStateFn(app.AppCodec(), app.AuthKeeper.AddressCodec(), app.StakingKeeper.ValidatorAddressCodec(), app.SimulationManager().Modules, app.DefaultGenesis()),
 		BlockedAddr:   blockedAddre,
 		AccountSource: app.AuthKeeper,
 		BalanceSource: app.BankKeeper,
@@ -140,7 +139,7 @@ func TestAppSimulationAfterImport(t *testing.T) {
 					genesisTimestamp := time.Unix(config.GenesisTime, 0)
 					return exported.AppState, acc, config.ChainID, genesisTimestamp
 				},
-				BlockedAddr:   BlockedAddresses(),
+				BlockedAddr:   must(BlockedAddresses(app.AuthKeeper.AddressCodec())),
 				AccountSource: app.AuthKeeper,
 				BalanceSource: app.BankKeeper,
 			}
@@ -273,4 +272,11 @@ func FuzzFullAppSimulation(f *testing.F) {
 			rawSeed[8:],
 		)
 	})
+}
+
+func must[T any](r T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return r
 }

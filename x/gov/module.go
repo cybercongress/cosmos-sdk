@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 
 	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/spf13/cobra"
@@ -227,13 +228,14 @@ func (AppModule) ProposalMsgsX(weights simsx.WeightSource, reg simsx.Registry) {
 	reg.Add(weights.Get("submit_text_proposal", 5), simulation.TextProposalFactory())
 }
 
-func (am AppModule) WeightedOperationsX(weights simsx.WeightSource, reg simsx.Registry, proposals []simtypes.WeightedProposalMsg,
+func (am AppModule) WeightedOperationsX(weights simsx.WeightSource, reg simsx.Registry, proposalsIter iter.Seq2[uint32, simsx.SimMsgFactoryX],
 	legacyProposals []simtypes.WeightedProposalContent, //nolint:staticcheck // used for legacy proposal types
 ) {
 	// submit proposal for each payload message
-	for _, wMsg := range proposals {
+	for weight, factory := range proposalsIter {
 		// todo: pick a ratio so that we don't flood with gov ops
-		reg.Add(uint32(wMsg.DefaultWeight()/25), simulation.MsgSubmitProposalFactory(am.keeper, wMsg.MsgSimulatorFn()))
+		reg.Add(weight/25, simulation.MsgSubmitProposalFactory(am.keeper, factory))
+		break // todo: support multiple entries of same msg type or refactor proposal factory
 	}
 	for _, wContent := range legacyProposals {
 		reg.Add(weights.Get(wContent.AppParamsKey(), uint32(wContent.DefaultWeight())), simulation.MsgSubmitLegacyProposalFactory(am.keeper, wContent.ContentSimulatorFn()))

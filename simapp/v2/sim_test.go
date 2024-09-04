@@ -3,11 +3,11 @@ package simapp
 import (
 	"bytes"
 	"context"
-	appmanager "cosmossdk.io/core/app"
 	"cosmossdk.io/core/appmodule/v2"
 	appmodulev2 "cosmossdk.io/core/appmodule/v2"
 	"cosmossdk.io/core/comet"
 	corecontext "cosmossdk.io/core/context"
+	"cosmossdk.io/core/server"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/core/transaction"
 	"cosmossdk.io/log"
@@ -30,21 +30,31 @@ import (
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
 	"github.com/cosmos/cosmos-sdk/x/simulation"
 	"github.com/cosmos/cosmos-sdk/x/simulation/client/cli"
+	"github.com/huandu/skiplist"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/maps"
+	"iter"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 )
 
 type T = transaction.Tx
-type HasWeightedOperationsX interface {
-	WeightedOperationsX(weight simsx.WeightSource, reg simsx.Registry)
-}
+type (
+	HasWeightedOperationsX interface {
+		WeightedOperationsX(weight simsx.WeightSource, reg simsx.Registry)
+	}
+	HasWeightedOperationsXWithProposals interface {
+		WeightedOperationsX(weights simsx.WeightSource, reg simsx.Registry, proposals iter.Seq2[uint32, simsx.SimMsgFactoryX],
+			legacyProposals []simtypes.WeightedProposalContent) //nolint: staticcheck // used for legacy proposal types
+	}
+	HasProposalMsgsX interface {
+		ProposalMsgsX(weights simsx.WeightSource, reg simsx.Registry)
+	}
+)
 
 const (
 	minTimePerBlock int64 = 10000 / 2
@@ -68,7 +78,7 @@ func TestSimsAppV2(t *testing.T) {
 
 	tCfg := cli.NewConfigFromFlags().With(t, 1, nil)
 
-	appStateFn := simtestutil.AppStateFnY(
+	appStateFn := simtestutil.AppStateFn(
 		app.AppCodec(),
 		app.AuthKeeper.AddressCodec(),
 		app.StakingKeeper.ValidatorAddressCodec(),
@@ -85,7 +95,7 @@ func TestSimsAppV2(t *testing.T) {
 	appState, accounts, chainID, genesisTimestamp := appStateFn(r, accounts, tCfg)
 
 	appStore := app.GetStore().(cometbfttypes.Store)
-	genesisReq := &appmanager.BlockRequest[T]{
+	genesisReq := &server.BlockRequest[T]{
 		Height:    0, // todo: or 1?
 		Time:      genesisTimestamp,
 		Hash:      make([]byte, 32),
@@ -123,23 +133,28 @@ func TestSimsAppV2(t *testing.T) {
 	emptySimParams := make(map[string]json.RawMessage, 0) // todo read sims params from disk as before
 	weights := simsx.ParamWeightSource(emptySimParams)
 
-	factoryRegistry := make(SimsV2Reg)
-	// register all msg factories
-	for name, v := range app.ModuleManager().Modules() {
-		if name == "authz" { // || // todo: enable when router issue is solved with `/` prefix in MsgTypeURL
-			//name == "slashing" { // todo: enable when tree issue fixed
-
-			continue
+	proposalRegistry := make(simsx.SimsV2Reg)
+	for _, m := range app.ModuleManager().Modules() {
+		switch xm := m.(type) {
+		case HasProposalMsgsX:
+			xm.ProposalMsgsX(weights, proposalRegistry)
 		}
-		if w, ok := v.(HasWeightedOperationsX); ok {
-			w.WeightedOperationsX(weights, factoryRegistry)
+	}
+	factoryRegistry := make(simsx.SimsV2Reg)
+	// register all msg factories
+	for _, m := range app.ModuleManager().Modules() {
+		switch xm := m.(type) {
+		case HasWeightedOperationsX:
+			xm.WeightedOperationsX(weights, factoryRegistry)
+		case HasWeightedOperationsXWithProposals:
+			xm.WeightedOperationsX(weights, factoryRegistry, proposalRegistry.Iterator(), nil)
 		}
 	}
 	// todo: register legacy and v1 msg proposals
 
 	const ( // todo: read from CLI instead
 		numBlocks     = 50 // 500 default
-		maxTXPerBlock = 5  // 200 default
+		maxTXPerBlock = 15 // 200 default
 	)
 
 	rootReporter := simsx.NewBasicSimulationReporter()
@@ -148,6 +163,9 @@ func TestSimsAppV2(t *testing.T) {
 		txSkippedCounter int
 		txTotalCounter   int
 	)
+	futureOpsReg := newFutureOpsRegistry()
+	msgFactoriesFn := factoryRegistry.NextFactoryFn(r)
+
 	for i := 0; i < numBlocks; i++ {
 		if len(activeValidatorSet) == 0 {
 			t.Skipf("run out of validators in block: %d\n", i+1)
@@ -156,7 +174,7 @@ func TestSimsAppV2(t *testing.T) {
 		blockTime = blockTime.Add(time.Duration(minTimePerBlock) * time.Second)
 		blockTime = blockTime.Add(time.Duration(int64(r.Intn(int(timeRangePerBlock)))) * time.Second)
 		valsetHistory.Add(blockTime, activeValidatorSet)
-		blockReqN := &appmanager.BlockRequest[T]{
+		blockReqN := &server.BlockRequest[T]{
 			Height:  uint64(2 + i),
 			Time:    blockTime,
 			Hash:    stateRoot,
@@ -169,8 +187,14 @@ func TestSimsAppV2(t *testing.T) {
 			ProposerAddress: activeValidatorSet[0].addr,
 			LastCommit:      activeValidatorSet.NewCommitInfo(r),
 		}
-		msgFactoriesFn := factoryRegistry.NextFactoryFn(r)
-		//app.ConsensusParamsKeeper.SetCometInfo()
+		fOps, pos := futureOpsReg.findScheduled(blockTime), 0
+		nextFactoryFn := func() simsx.SimMsgFactoryX {
+			if pos < len(fOps) {
+				pos++
+				return fOps[pos-1]
+			}
+			return msgFactoriesFn()
+		}
 		ctx = context.WithValue(ctx, corecontext.CometInfoKey, cometInfo) // required for ContextAwareCometInfoService
 		resultHandlers := make([]simsx.SimDeliveryResultHandler, 0, maxTXPerBlock)
 		var txPerBlockCounter int
@@ -178,8 +202,11 @@ func TestSimsAppV2(t *testing.T) {
 			testData := simsx.NewChainDataSource(ctx, r, app.AuthKeeper, app.BankKeeper, app.txConfig.SigningContext().AddressCodec(), accounts...)
 			for txPerBlockCounter < maxTXPerBlock {
 				txPerBlockCounter++
-				msgFactory := msgFactoriesFn()
+				msgFactory := nextFactoryFn()
 				reporter := rootReporter.WithScope(msgFactory.MsgType())
+				if fx, ok := msgFactory.(simsx.HasFutureOpsRegistry); ok {
+					fx.SetFutureOpsRegistry(futureOpsReg)
+				}
 
 				// the stf context is required to access state via keepers
 				signers, msg := msgFactory.Create()(ctx, testData, reporter)
@@ -215,6 +242,56 @@ func TestSimsAppV2(t *testing.T) {
 	fmt.Printf("Tx total: %d skipped: %d\n", txTotalCounter, txSkippedCounter)
 }
 
+type futureOpsRegistry struct {
+	list *skiplist.SkipList
+}
+
+var _ skiplist.Comparable = timeComparator{}
+
+// used for skiplist
+type timeComparator struct {
+}
+
+func (t timeComparator) Compare(lhs, rhs interface{}) int {
+	return lhs.(time.Time).Compare(rhs.(time.Time))
+}
+
+func (t timeComparator) CalcScore(key interface{}) float64 {
+	return float64(key.(time.Time).UnixNano())
+}
+
+func newFutureOpsRegistry() *futureOpsRegistry {
+	return &futureOpsRegistry{list: skiplist.New(skiplist.Int64)}
+}
+
+func (l *futureOpsRegistry) Add(blockTime time.Time, fx simsx.SimMsgFactoryX) {
+	if fx == nil {
+		panic("message factory must not be nil")
+	}
+	if blockTime.IsZero() {
+		return
+	}
+	var scheduledOps []simsx.SimMsgFactoryX
+	if e := l.list.Get(blockTime); e != nil {
+		scheduledOps = e.Value.([]simsx.SimMsgFactoryX)
+	}
+	scheduledOps = append(scheduledOps, fx)
+	l.list.Set(blockTime, scheduledOps)
+}
+
+func (l *futureOpsRegistry) findScheduled(blockTime time.Time) []simsx.SimMsgFactoryX {
+	var r []simsx.SimMsgFactoryX
+	for {
+		e := l.list.Front()
+		if e == nil || e.Key().(time.Time).After(blockTime) {
+			break
+		}
+		r = append(r, e.Value.([]simsx.SimMsgFactoryX)...)
+		l.list.RemoveFront()
+	}
+	return r
+}
+
 func buildTestTX(
 	ctx context.Context,
 	ak simsx.AccountSource,
@@ -243,46 +320,6 @@ func buildTestTX(
 		sequenceNumbers,
 		Collect(senders, func(a simsx.SimAccount) cryptotypes.PrivKey { return a.PrivKey })...,
 	)
-}
-
-type weightedFactory struct {
-	weight  uint32
-	factory simsx.SimMsgFactoryX
-}
-
-var _ simsx.Registry = &SimsV2Reg{}
-
-type SimsV2Reg map[string]weightedFactory
-
-func (s SimsV2Reg) Add(weight uint32, f simsx.SimMsgFactoryX) {
-	s[sdk.MsgTypeURL(f.MsgType())] = weightedFactory{weight: weight, factory: f}
-}
-
-func (s SimsV2Reg) NextFactoryFn(r *rand.Rand) func() simsx.SimMsgFactoryX {
-	factories := maps.Values(s)
-	slices.SortFunc(factories, func(a, b weightedFactory) int { // sort to make deterministic
-		return strings.Compare(sdk.MsgTypeURL(a.factory.MsgType()), sdk.MsgTypeURL(b.factory.MsgType()))
-	})
-	r.Shuffle(len(factories), func(i, j int) {
-		factories[i], factories[j] = factories[j], factories[i]
-	})
-	var totalWeight int
-	for k := range factories {
-		totalWeight += k
-	}
-	return func() simsx.SimMsgFactoryX {
-		// this is copied from old sims WeightedOperations.getSelectOpFn
-		// TODO: refactor to make more efficient
-		x := r.Intn(totalWeight)
-		for i := 0; i < len(factories); i++ {
-			if x <= int(factories[i].weight) {
-				return factories[i].factory
-			}
-			x -= int(factories[i].weight)
-		}
-		// shouldn't happen
-		return factories[0].factory
-	}
 }
 
 func toSimsModule(modules map[string]appmodule.AppModule) []module.AppModuleSimulation {

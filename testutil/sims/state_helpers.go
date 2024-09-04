@@ -37,51 +37,11 @@ const (
 )
 
 // AppStateFn returns the initial application state using a genesis or the simulation parameters.
-// It calls appStateFnWithExtendedCb with nil rawStateCb.
-// Deprecated: use AppStateFnY instead
 func AppStateFn(
-	cdc codec.JSONCodec,
-	addresCodec, validatorCodec address.Codec,
-	simManager *module.SimulationManager,
-	genesisState map[string]json.RawMessage,
-) simtypes.AppStateFn {
-	return appStateFnWithExtendedCb(cdc, addresCodec, validatorCodec, simManager.Modules, genesisState, nil)
-}
-
-func AppStateFnY(
-	cdc codec.JSONCodec,
-	addresCodec, validatorCodec address.Codec,
-	modules []module.AppModuleSimulation,
-	genesisState map[string]json.RawMessage,
-) simtypes.AppStateFn {
-	return appStateFnWithExtendedCb(cdc, addresCodec, validatorCodec, modules, genesisState, nil)
-}
-
-// appStateFnWithExtendedCb returns the initial application state using a genesis or the simulation parameters.
-// It calls appStateFnWithExtendedCbs with nil moduleStateCb.
-func appStateFnWithExtendedCb(
-	cdc codec.JSONCodec,
-	addresCodec, validatorCodec address.Codec,
-	modules []module.AppModuleSimulation,
-	genesisState map[string]json.RawMessage,
-	rawStateCb func(rawState map[string]json.RawMessage),
-) simtypes.AppStateFn {
-	return appStateFnWithExtendedCbs(cdc, addresCodec, validatorCodec, modules, genesisState, nil, rawStateCb)
-}
-
-// appStateFnWithExtendedCbs returns the initial application state using a genesis or the simulation parameters.
-// It panics if the user provides files for both of them.
-// If a file is not given for the genesis or the sim params, it creates a randomized one.
-// genesisState is the default genesis state of the whole app.
-// moduleStateCb is the callback function to access moduleState.
-// rawStateCb is the callback function to extend rawState.
-func appStateFnWithExtendedCbs(
 	cdc codec.JSONCodec,
 	addressCodec, validatorCodec address.Codec,
 	modules []module.AppModuleSimulation,
 	genesisState map[string]json.RawMessage,
-	moduleStateCb func(moduleName string, genesisState interface{}),
-	rawStateCb func(rawState map[string]json.RawMessage),
 ) simtypes.AppStateFn {
 	return func(
 		r *rand.Rand,
@@ -122,11 +82,11 @@ func appStateFnWithExtendedCbs(
 			if err != nil {
 				panic(err)
 			}
-			appState, simAccs = AppStateRandomizedFnY(modules, r, cdc, accs, genesisTimestamp, appParams, genesisState, addressCodec, validatorCodec)
+			appState, simAccs = AppStateRandomizedFn(modules, r, cdc, accs, genesisTimestamp, appParams, genesisState, addressCodec, validatorCodec)
 
 		default:
 			appParams := make(simtypes.AppParams)
-			appState, simAccs = AppStateRandomizedFnY(modules, r, cdc, accs, genesisTimestamp, appParams, genesisState, addressCodec, validatorCodec)
+			appState, simAccs = AppStateRandomizedFn(modules, r, cdc, accs, genesisTimestamp, appParams, genesisState, addressCodec, validatorCodec)
 		}
 
 		rawState := make(map[string]json.RawMessage)
@@ -183,15 +143,7 @@ func appStateFnWithExtendedCbs(
 			stakingtypes.ModuleName: stakingState,
 			testutil.BankModuleName: bankState,
 		} {
-			if moduleStateCb != nil {
-				moduleStateCb(name, state)
-			}
 			rawState[name] = cdc.MustMarshalJSON(state)
-		}
-
-		// extend state from callback function
-		if rawStateCb != nil {
-			rawStateCb(rawState)
 		}
 
 		// replace appstate
@@ -206,19 +158,6 @@ func appStateFnWithExtendedCbs(
 // AppStateRandomizedFn creates calls each module's GenesisState generator function
 // and creates the simulation params
 func AppStateRandomizedFn(
-	simManager *module.SimulationManager,
-	r *rand.Rand,
-	cdc codec.JSONCodec,
-	accs []simtypes.Account,
-	genesisTimestamp time.Time,
-	appParams simtypes.AppParams,
-	genesisState map[string]json.RawMessage,
-	addressCodec, validatorCodec address.Codec,
-) (json.RawMessage, []simtypes.Account) {
-	return AppStateRandomizedFnY(simManager.Modules, r, cdc, accs, genesisTimestamp, appParams, genesisState, addressCodec, validatorCodec)
-}
-
-func AppStateRandomizedFnY(
 	modules []module.AppModuleSimulation,
 	r *rand.Rand,
 	cdc codec.JSONCodec,

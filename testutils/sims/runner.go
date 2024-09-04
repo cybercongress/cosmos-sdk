@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,8 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	corestore "cosmossdk.io/core/store"
-	"cosmossdk.io/core/log"
-	tlog "cosmossdk.io/log"
+	"cosmossdk.io/log"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -121,7 +121,7 @@ func RunWithSeeds[T SimulationApp](
 func RunWithSeed[T SimulationApp](
 	tb testing.TB,
 	cfg simtypes.Config,
-	appFactory func(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool, appOpts servertypes.AppOptions, baseAppOptions ...func(*baseapp.BaseApp)) T,
+	appFactory func(logger log.Logger, db corestore.KVStoreWithBatch, traceStore io.Writer, loadLatest bool, appOpts servertypes.AppOptions, baseAppOptions ...func(*baseapp.BaseApp)) T,
 	setupStateFactory func(app T) SimStateFactory,
 	seed int64,
 	fuzzSeed []byte,
@@ -147,7 +147,7 @@ func RunWithSeed[T SimulationApp](
 	err = simtestutil.CheckExportSimulation(app, tCfg, simParams)
 	require.NoError(tb, err)
 	if tCfg.Commit && tCfg.DBBackend == "goleveldb" {
-		simtestutil.PrintStats(testInstance.DB.(*dbm.GoLevelDB))
+		simtestutil.PrintStats(testInstance.DB.(*dbm.GoLevelDB), tb.Log)
 	}
 	// not using tb.Log to always print the summary
 	fmt.Printf("+++ DONE (seed: %d): \n%s\n", seed, reporter.Summary().String())
@@ -162,7 +162,7 @@ type (
 		WeightedOperationsX(weight simsx.WeightSource, reg simsx.Registry)
 	}
 	HasWeightedOperationsXWithProposals interface {
-		WeightedOperationsX(weights simsx.WeightSource, reg simsx.Registry, proposals []simtypes.WeightedProposalMsg,
+		WeightedOperationsX(weights simsx.WeightSource, reg simsx.Registry, proposals iter.Seq2[uint32, simsx.SimMsgFactoryX],
 			legacyProposals []simtypes.WeightedProposalContent) //nolint: staticcheck // used for legacy proposal types
 	}
 	HasProposalMsgsX interface {
@@ -198,7 +198,6 @@ type (
 //   - Cfg: The configuration flags for the simulator.
 //   - AppLogger: The logger used for logging in the app during the simulation, with seed value attached.
 //   - ExecLogWriter: Captures block and operation data coming from the simulation
-//
 type TestInstance[T SimulationApp] struct {
 	App           T
 	DB            corestore.KVStoreWithBatch
@@ -239,13 +238,12 @@ func prepareWeightedOps(
 		}
 	}
 
-	simState.LegacyProposalContents = sm.GetProposalContents(simState) //nolint:staticcheck // we're testing the old way here
-
 	weights := simsx.ParamWeightSource(simState.AppParams)
 	reporter := simsx.NewBasicSimulationReporter()
 
-	pReg := simsx.NewSimsProposalRegistryAdapter(reporter, stateFact.AccountSource, stateFact.BalanceSource, txConfig.SigningContext().AddressCodec(), logger)
+	pReg := make(simsx.SimsV2Reg)
 	wProps := make([]simtypes.WeightedProposalMsg, 0, len(sm.Modules))
+	wContent := make([]simtypes.WeightedProposalContent, 0)
 
 	// add gov proposals types
 	for _, m := range sm.Modules {
@@ -254,9 +252,16 @@ func prepareWeightedOps(
 			xm.ProposalMsgsX(weights, pReg)
 		case HasLegacyProposalMsgs:
 			wProps = append(wProps, xm.ProposalMsgs(simState)...)
+		case HasLegacyProposalContents:
+			wContent = append(wContent, xm.ProposalContents(simState)...)
 		}
 	}
-	simState.ProposalMsgs = append(wProps, pReg.ToLegacyObjects()...)
+	if len(wProps) != 0 {
+		panic("legacy proposals are not empty")
+	}
+	if len(wContent) != 0 {
+		panic("legacy proposal contents are not empty")
+	}
 
 	oReg := simsx.NewSimsMsgRegistryAdapter(reporter, stateFact.AccountSource, stateFact.BalanceSource, txConfig, logger)
 	wOps := make([]simtypes.WeightedOperation, 0, len(sm.Modules))
@@ -266,7 +271,7 @@ func prepareWeightedOps(
 		case HasWeightedOperationsX:
 			xm.WeightedOperationsX(weights, oReg)
 		case HasWeightedOperationsXWithProposals:
-			xm.WeightedOperationsX(weights, oReg, simState.ProposalMsgs, simState.LegacyProposalContents)
+			xm.WeightedOperationsX(weights, oReg, pReg.Iterator(), nil)
 		case HasLegacyWeightedOperations:
 			wOps = append(wOps, xm.WeightedOperations(simState)...)
 		}
@@ -295,7 +300,6 @@ func NewSimulationAppInstance[T SimulationApp](
 		logger = log.NewTestLoggerError(tb)
 	}
 	logger = logger.With("seed", tCfg.Seed)
-
 	db, err := dbm.NewDB("Simulation", dbm.BackendType(tCfg.DBBackend), dbDir)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {

@@ -28,7 +28,6 @@ type AccountSourceX interface {
 
 var (
 	_ Registry = &WeightedOperationRegistryAdapter{}
-	_ Registry = &SimsProposalRegistryAdapter{}
 )
 
 // common types for abstract registry without generics
@@ -95,7 +94,7 @@ func (l *WeightedOperationRegistryAdapter) Add(weight uint32, fx SimMsgFactoryX)
 	l.legacyObjs = append(l.legacyObjs, obj)
 }
 
-type hasFutureOpsRegistry interface {
+type HasFutureOpsRegistry interface {
 	SetFutureOpsRegistry(FutureOpsRegistry)
 }
 
@@ -108,8 +107,8 @@ func legacyOperationAdapter(l regCommon, fx SimMsgFactoryX) simtypes.Operation {
 		ctx = sdk.UnwrapSDKContext(xCtx)
 		testData := l.newChainDataSource(ctx, r, accs...)
 		reporter := l.reporter.WithScope(fx.MsgType(), SkipHookFn(func(args ...any) { done() }))
-		fOpsReg := newFutureOpsRegistry(l)
-		if fx, ok := fx.(hasFutureOpsRegistry); ok {
+		fOpsReg := NewFutureOpsRegistry(l)
+		if fx, ok := fx.(HasFutureOpsRegistry); ok {
 			fx.SetFutureOpsRegistry(fOpsReg)
 		}
 		from, msg := runWithFailFast(ctx, testData, reporter, fx.Create())
@@ -120,7 +119,7 @@ func legacyOperationAdapter(l regCommon, fx SimMsgFactoryX) simtypes.Operation {
 	}
 }
 
-func newFutureOpsRegistry(l regCommon) *FutureOperationRegistryAdapter {
+func NewFutureOpsRegistry(l regCommon) *FutureOperationRegistryAdapter {
 	return &FutureOperationRegistryAdapter{regCommon: l}
 }
 
@@ -138,53 +137,6 @@ func (l *FutureOperationRegistryAdapter) Add(blockTime time.Time, fx SimMsgFacto
 		Op:        legacyOperationAdapter(l.regCommon, fx),
 	}
 	l.legacyObjs = append(l.legacyObjs, obj)
-}
-
-type SimsProposalRegistryAdapter struct {
-	AbstractRegistry[simtypes.WeightedProposalMsg]
-}
-
-// NewSimsProposalRegistryAdapter creates a new instance of SimsRegistryAdapter for WeightedProposalMsg types.
-func NewSimsProposalRegistryAdapter(
-	reporter SimulationReporter,
-	ak AccountSourceX,
-	bk BalanceSource,
-	addrCodec address.Codec,
-	logger log.Logger,
-) *SimsProposalRegistryAdapter {
-	return &SimsProposalRegistryAdapter{
-		AbstractRegistry: AbstractRegistry[simtypes.WeightedProposalMsg]{
-			regCommon: regCommon{
-				reporter:     reporter,
-				ak:           ak,
-				bk:           bk,
-				addressCodec: addrCodec,
-				logger:       logger,
-			},
-		},
-	}
-}
-
-func (l *SimsProposalRegistryAdapter) Add(weight uint32, fx SimMsgFactoryX) {
-	if fx == nil {
-		panic("message factory must not be nil")
-	}
-	if weight == 0 {
-		return
-	}
-	l.legacyObjs = append(l.legacyObjs, legacyProposalMsgAdapter(l.regCommon, weight, fx))
-}
-
-// legacyProposalMsgAdapter adapter to convert the new msg factory into the weighted proposal message type
-func legacyProposalMsgAdapter(l regCommon, weight uint32, fx SimMsgFactoryX) simtypes.WeightedProposalMsg {
-	msgAdapter := func(ctx context.Context, r *rand.Rand, accs []simtypes.Account, cdc address.Codec) (sdk.Msg, error) {
-		xCtx, done := context.WithCancel(ctx)
-		testData := l.newChainDataSource(xCtx, r, accs...)
-		reporter := l.reporter.WithScope(fx.MsgType(), SkipHookFn(func(args ...any) { done() }))
-		_, msg := runWithFailFast(xCtx, testData, reporter, fx.Create())
-		return msg, reporter.Close()
-	}
-	return simulation.NewWeightedProposalMsgX("", int(weight), msgAdapter)
 }
 
 type tuple struct {

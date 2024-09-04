@@ -136,9 +136,9 @@ func (a AppManager[T]) DeliverBlock(
 }
 func (a AppManager[T]) DeliverSims(
 	ctx context.Context,
-	block *appmanager.BlockRequest[T],
+	block *server.BlockRequest[T],
 	simsBuilder func(ctx context.Context) (T, bool),
-) (*appmanager.BlockResponse, corestore.WriterMap, error) {
+) (*server.BlockResponse, corestore.WriterMap, error) {
 	latestVersion, currentState, err := a.db.StateLatest()
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create new state for height %d: %w", block.Height, err)

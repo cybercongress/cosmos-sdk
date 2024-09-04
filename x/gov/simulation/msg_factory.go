@@ -115,18 +115,9 @@ func MsgSubmitLegacyProposalFactory(k *keeper.Keeper, contentSimFn simtypes.Cont
 	})
 }
 
-func MsgSubmitProposalFactory(k *keeper.Keeper, msgSimulatorFn simtypes.MsgSimulatorFnX) simsx.SimMsgFactoryX {
+func MsgSubmitProposalFactory(k *keeper.Keeper, payloadFactory simsx.SimMsgFactoryX) simsx.SimMsgFactoryX {
 	return simsx.NewSimMsgFactoryWithFutureOps[*v1.MsgSubmitProposal](func(ctx context.Context, testData *simsx.ChainDataSource, reporter simsx.SimulationReporter, fOpsReg simsx.FutureOpsRegistry) ([]simsx.SimAccount, *v1.MsgSubmitProposal) {
-		accs := testData.AllAccounts()
-		proposalMsg, err := msgSimulatorFn(ctx, testData.Rand().Rand, accs, testData.AddressCodec())
-		if err != nil {
-			reporter.Skip(err.Error())
-			return nil, nil
-		}
-		if proposalMsg == nil {
-			reporter.Skip("empty proposal message")
-			return nil, nil
-		}
+		_, proposalMsg := payloadFactory.Create()(ctx, testData, reporter)
 		return submitProposalWithVotesScheduled(ctx, k, testData, reporter, fOpsReg, proposalMsg)
 	})
 }

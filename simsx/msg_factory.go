@@ -57,7 +57,7 @@ func (f ResultHandlingSimMsgFactory[T]) DeliveryResultHandler() SimDeliveryResul
 
 var (
 	_ SimMsgFactoryX       = &LazyStateSimMsgFactory[sdk.Msg]{}
-	_ hasFutureOpsRegistry = &LazyStateSimMsgFactory[sdk.Msg]{}
+	_ HasFutureOpsRegistry = &LazyStateSimMsgFactory[sdk.Msg]{}
 )
 
 // LazyStateSimMsgFactory stateful message factory with weighted proposals and future operation
