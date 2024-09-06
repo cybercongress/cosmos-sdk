@@ -125,12 +125,13 @@ func TestSimsAppV2(t *testing.T) {
 	activeValidatorSet := NewValSet().Update(initRsp.ValidatorUpdates)
 	valsetHistory := NewValSetHistory(150) // todo: configure
 	valsetHistory.Add(genesisReq.Time, activeValidatorSet)
+	require.NoError(t, appStore.SetInitialVersion(genesisReq.Height))
 	changeSet, err := genesisState.GetStateChanges()
 	require.NoError(t, err)
 	stateRoot, err := appStore.Commit(&store.Changeset{Changes: changeSet})
 	require.NoError(t, err)
 
-	emptySimParams := make(map[string]json.RawMessage, 0) // todo read sims params from disk as before
+	emptySimParams := make(map[string]json.RawMessage) // todo read sims params from disk as before
 	weights := simsx.ParamWeightSource(emptySimParams)
 
 	// get all proposal types

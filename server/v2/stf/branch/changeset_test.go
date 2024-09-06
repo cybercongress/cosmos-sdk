@@ -1,6 +1,7 @@
 package branch
 
 import (
+	"bytes"
 	corestore "cosmossdk.io/core/store"
 	"reflect"
 	"testing"
@@ -89,13 +90,36 @@ func TestBreakBtree(t *testing.T) {
 	for i := byte(0); i < 63; i++ { // set to 63 elements to have a node split on the next insert
 		parent.set([]byte{myPrefix, i}, []byte{i})
 	}
-	it, _ := parent.reverseIterator([]byte{myPrefix, 32}, []byte{myPrefix, 50}) // ValidatorsPowerStoreIterator
+	it, _ := parent.reverseIterator([]byte{myPrefix, 32}, []byte{myPrefix, 34}) // ValidatorsPowerStoreIterator
 	if !it.Valid() {
 		t.Fatal("expected valid iterator")
 	}
-	for i := 0; it.Valid() && i < 2; it.Next() {
+	// when btree is modified on a non conflicting key
+	parent.set([]byte{otherPrefix, byte(1)}, []byte("any value")) // SetLastValidatorPower
+
+	// then
+	var got [][2][]byte
+	for ; it.Valid(); it.Next() {
 		t.Logf("got key: %x\n", it.Key())
-		i++
-		parent.set([]byte{otherPrefix, byte(i)}, []byte("any value")) // SetLastValidatorPower
+		got = append(got, [2][]byte{it.Key(), it.Value()})
 	}
+	exp := [][2][]byte{
+		{{myPrefix, byte(33)}, []byte{33}},
+		{{myPrefix, byte(32)}, []byte{32}},
+	}
+	if !reflect.DeepEqual(exp, got) {
+		t.Errorf("expected %#v, got %#v", exp, got)
+	}
+	// and when new data is stored
+	parent.set([]byte{otherPrefix, byte(2)}, []byte("other value"))
+	// then
+	gotVal, ok := parent.get([]byte{otherPrefix, byte(2)})
+	if !ok {
+		t.Fatal("not found")
+	}
+	expVal := []byte("other value")
+	if bytes.Compare(gotVal, expVal) != 0 {
+		t.Errorf("expected %#v, got %#v", expVal, gotVal)
+	}
+
 }
