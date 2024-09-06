@@ -11,7 +11,7 @@ import (
 
 var _ Registry = &SimsV2Reg{}
 
-type SimsV2Reg map[string]weightedFactory
+type SimsV2Reg map[string]WeightedFactory
 
 func (s SimsV2Reg) Add(weight uint32, f SimMsgFactoryX) {
 	msgType := f.MsgType()
@@ -19,15 +19,16 @@ func (s SimsV2Reg) Add(weight uint32, f SimMsgFactoryX) {
 	if _, exists := s[msgTypeURL]; exists {
 		panic("type is already registered: " + msgTypeURL)
 	}
-	s[msgTypeURL] = weightedFactory{weight: weight, factory: f}
+	s[msgTypeURL] = WeightedFactory{Weight: weight, Factory: f}
 }
 
 func (s SimsV2Reg) NextFactoryFn(r *rand.Rand) func() SimMsgFactoryX {
 	factories := maps.Values(s)
-	slices.SortFunc(factories, func(a, b weightedFactory) int { // sort to make deterministic
-		return strings.Compare(sdk.MsgTypeURL(a.factory.MsgType()), sdk.MsgTypeURL(b.factory.MsgType()))
+	slices.SortFunc(factories, func(a, b WeightedFactory) int { // sort to make deterministic
+		return strings.Compare(sdk.MsgTypeURL(a.Factory.MsgType()), sdk.MsgTypeURL(b.Factory.MsgType()))
 	})
-	r.Shuffle(len(factories), func(i, j int) {
+	factCount := len(factories)
+	r.Shuffle(factCount, func(i, j int) {
 		factories[i], factories[j] = factories[j], factories[i]
 	})
 	var totalWeight int
@@ -36,45 +37,44 @@ func (s SimsV2Reg) NextFactoryFn(r *rand.Rand) func() SimMsgFactoryX {
 	}
 	return func() SimMsgFactoryX {
 		// this is copied from old sims WeightedOperations.getSelectOpFn
-		// TODO: refactor to make more efficient
 		x := r.Intn(totalWeight)
-		for i := 0; i < len(factories); i++ {
-			if x <= int(factories[i].weight) {
-				return factories[i].factory
+		for i := 0; i < factCount; i++ {
+			if x <= int(factories[i].Weight) {
+				return factories[i].Factory
 			}
-			x -= int(factories[i].weight)
+			x -= int(factories[i].Weight)
 		}
 		// shouldn't happen
-		return factories[0].factory
+		return factories[0].Factory
 	}
 }
 
 func (s SimsV2Reg) Iterator() iter.Seq2[uint32, SimMsgFactoryX] {
 	x := maps.Values(s)
-	slices.SortFunc(x, func(a, b weightedFactory) int {
+	slices.SortFunc(x, func(a, b WeightedFactory) int {
 		return a.Compare(b)
 	})
 	return func(yield func(uint32, SimMsgFactoryX) bool) {
 		for _, v := range x {
-			if !yield(v.weight, v.factory) {
+			if !yield(v.Weight, v.Factory) {
 				return
 			}
 		}
 	}
 }
 
-type weightedFactory struct {
-	weight  uint32
-	factory SimMsgFactoryX
+type WeightedFactory struct {
+	Weight  uint32
+	Factory SimMsgFactoryX
 }
 
-func (f weightedFactory) Compare(b weightedFactory) int {
+func (f WeightedFactory) Compare(b WeightedFactory) int {
 	switch {
-	case f.weight > b.weight:
+	case f.Weight > b.Weight:
 		return 1
-	case f.weight < b.weight:
+	case f.Weight < b.Weight:
 		return -1
 	default:
-		return strings.Compare(sdk.MsgTypeURL(f.factory.MsgType()), sdk.MsgTypeURL(b.factory.MsgType()))
+		return strings.Compare(sdk.MsgTypeURL(f.Factory.MsgType()), sdk.MsgTypeURL(b.Factory.MsgType()))
 	}
 }

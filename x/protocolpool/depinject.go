@@ -86,5 +86,5 @@ func (am AppModule) ProposalMsgsX(weight simsx.WeightSource, reg simsx.Registry)
 }
 
 func (am AppModule) WeightedOperationsX(weight simsx.WeightSource, reg simsx.Registry) {
-	reg.Add(weight.Get("msg_fund_community_pool", 50), simulation.MsgMsgFundCommunityPoolFactory())
+	reg.Add(weight.Get("msg_fund_community_pool", 50), simulation.MsgFundCommunityPoolFactory())
 }

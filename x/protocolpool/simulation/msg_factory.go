@@ -9,7 +9,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
-func MsgMsgFundCommunityPoolFactory() simsx.SimMsgFactoryFn[*types.MsgFundCommunityPool] {
+func MsgFundCommunityPoolFactory() simsx.SimMsgFactoryFn[*types.MsgFundCommunityPool] {
 	return func(_ context.Context, testData *simsx.ChainDataSource, reporter simsx.SimulationReporter) ([]simsx.SimAccount, *types.MsgFundCommunityPool) {
 		funder := testData.AnyAccount(reporter, simsx.WithSpendableBalance())
 		fundAmount := funder.LiquidBalance().RandSubsetCoins(reporter)

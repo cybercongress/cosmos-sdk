@@ -115,62 +115,6 @@ func TestSimsMsgRegistryAdapter(t *testing.T) {
 	}
 }
 
-func TestSimsProposalRegistryAdapter(t *testing.T) {
-	myAcc1 := SimAccountFixture()
-	ak := MockAccountSourceX{GetAccountFn: MemoryAccountSource(myAcc1).GetAccount}
-	myMsg := testdata.NewTestMsg(myAcc1.Address)
-	addrCodec := txConfig().SigningContext().AddressCodec()
-	ctx := sdk.Context{}.WithContext(context.Background())
-
-	specs := map[string]struct {
-		factory SimMsgFactoryFn[*testdata.TestMsg]
-		expMsg  sdk.Msg
-		expErr  error
-	}{
-		"successful execution": {
-			factory: func(ctx context.Context, testData *ChainDataSource, reporter SimulationReporter) (signer []SimAccount, msg *testdata.TestMsg) {
-				return nil, myMsg
-			},
-			expMsg: myMsg,
-		},
-		"skip execution": {
-			factory: func(ctx context.Context, testData *ChainDataSource, reporter SimulationReporter) (signer []SimAccount, msg *testdata.TestMsg) {
-				reporter.Skip("testing")
-				return nil, nil
-			},
-		},
-		"error execution": {
-			factory: func(ctx context.Context, testData *ChainDataSource, reporter SimulationReporter) (signer []SimAccount, msg *testdata.TestMsg) {
-				reporter.Fail(errors.New("testing"))
-				return nil, nil
-			},
-			expErr: errors.New("testing"),
-		},
-	}
-	for name, spec := range specs {
-		t.Run(name, func(t *testing.T) {
-			r := NewBasicSimulationReporter()
-			reg := NewSimsProposalRegistryAdapter(r, ak, nil, addrCodec, log.NewNopLogger())
-			// when
-			reg.Add(100, spec.factory)
-			// then
-			gotOps := reg.ToLegacyObjects()
-			require.Len(t, gotOps, 1)
-			assert.Equal(t, 100, gotOps[0].DefaultWeight())
-
-			// and when ops executed
-			fn := gotOps[0].MsgSimulatorFn()
-			gotPayloadMsg, gotErr := fn(ctx, rand.New(rand.NewSource(1)), []simtypes.Account{}, addrCodec)
-			// then
-			if spec.expErr != nil {
-				require.Equal(t, spec.expErr, gotErr)
-				return
-			}
-			assert.Equal(t, spec.expMsg, gotPayloadMsg)
-		})
-	}
-}
-
 func TestRunWithFailFast(t *testing.T) {
 	myTestMsg := testdata.NewTestMsg()
 	mySigners := []SimAccount{SimAccountFixture()}

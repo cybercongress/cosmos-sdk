@@ -38,6 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"testing"
 	"time"
 )
@@ -129,19 +130,20 @@ func TestSimsAppV2(t *testing.T) {
 	stateRoot, err := appStore.Commit(&store.Changeset{Changes: changeSet})
 	require.NoError(t, err)
 
-	// next add a block
 	emptySimParams := make(map[string]json.RawMessage, 0) // todo read sims params from disk as before
 	weights := simsx.ParamWeightSource(emptySimParams)
 
+	// get all proposal types
 	proposalRegistry := make(simsx.SimsV2Reg)
 	for _, m := range app.ModuleManager().Modules() {
 		switch xm := m.(type) {
 		case HasProposalMsgsX:
 			xm.ProposalMsgsX(weights, proposalRegistry)
+			// todo: register legacy and v1 msg proposals
 		}
 	}
-	factoryRegistry := make(simsx.SimsV2Reg)
 	// register all msg factories
+	factoryRegistry := make(simsx.SimsV2Reg)
 	for _, m := range app.ModuleManager().Modules() {
 		switch xm := m.(type) {
 		case HasWeightedOperationsX:
@@ -150,11 +152,15 @@ func TestSimsAppV2(t *testing.T) {
 			xm.WeightedOperationsX(weights, factoryRegistry, proposalRegistry.Iterator(), nil)
 		}
 	}
-	// todo: register legacy and v1 msg proposals
-
+	msgTypes := maps.Keys(factoryRegistry)
+	sort.Strings(msgTypes)
+	for _, k := range msgTypes {
+		x := factoryRegistry[k]
+		fmt.Printf("factory: %d -> %s\n", x.Weight, k)
+	}
 	const ( // todo: read from CLI instead
-		numBlocks     = 50 // 500 default
-		maxTXPerBlock = 15 // 200 default
+		numBlocks     = 1200 // 500 default
+		maxTXPerBlock = 650  // 200 default
 	)
 
 	rootReporter := simsx.NewBasicSimulationReporter()
@@ -238,7 +244,7 @@ func TestSimsAppV2(t *testing.T) {
 		activeValidatorSet = activeValidatorSet.Update(blockRsp.ValidatorUpdates)
 		fmt.Printf("active validator set: %d\n", len(activeValidatorSet))
 	}
-	fmt.Println("+++ reporter: " + rootReporter.Summary().String())
+	fmt.Println("+++ reporter:\n" + rootReporter.Summary().String())
 	fmt.Printf("Tx total: %d skipped: %d\n", txTotalCounter, txSkippedCounter)
 }
 

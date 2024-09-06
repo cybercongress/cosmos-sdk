@@ -180,5 +180,5 @@ func (am AppModule) RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
 // WeightedOperationsX returns the all the slashing module operations with their respective weights.
 func (am AppModule) WeightedOperationsX(weights simsx.WeightSource, reg simsx.Registry) {
 	// note: using old keys for backwards compatibility
-	reg.Add(weights.Get("msg_unjail", 100), simulation.MsgUnjailFactory(am.keeper, am.stakingKeeper))
+	reg.Add(weights.Get("msg_unjail", 20), simulation.MsgUnjailFactory(am.keeper, am.stakingKeeper))
 }
