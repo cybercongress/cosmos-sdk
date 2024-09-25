@@ -13,6 +13,7 @@ import (
 	"cosmossdk.io/core/transaction"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
+	"cosmossdk.io/runtime/v2"
 	serverv2 "cosmossdk.io/server/v2"
 	cometbfttypes "cosmossdk.io/server/v2/cometbft/types"
 	bankkeeper "cosmossdk.io/x/bank/keeper"
@@ -38,29 +39,19 @@ import (
 	"github.com/huandu/skiplist"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/maps"
-	"iter"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
-	"strings"
 	"testing"
 	"time"
 )
 
 type T = transaction.Tx
 type (
-	HasWeightedOperationsX interface {
-		WeightedOperationsX(weight simsx.WeightSource, reg simsx.Registry)
-	}
-	HasWeightedOperationsXWithProposals interface {
-		WeightedOperationsX(weights simsx.WeightSource, reg simsx.Registry, proposals iter.Seq2[uint32, simsx.SimMsgFactoryX],
-			legacyProposals []simtypes.WeightedProposalContent) //nolint: staticcheck // used for legacy proposal types
-	}
-	HasProposalMsgsX interface {
-		ProposalMsgsX(weights simsx.WeightSource, reg simsx.Registry)
-	}
+	HasWeightedOperationsX              = simsx.HasWeightedOperationsX
+	HasWeightedOperationsXWithProposals = simsx.HasWeightedOperationsXWithProposals
+	HasProposalMsgsX                    = simsx.HasProposalMsgsX
 )
 
 const (
@@ -87,12 +78,13 @@ func TestSimsAppV2(t *testing.T) {
 		simsx.ModuleAccountSource
 		simsx.AccountSource
 	}
-	var validatorAddressCodec addresscodec.Codec
+	var validatorAddressCodec addresscodec.ValidatorAddressCodec
 	var addressCodec addresscodec.Codec
 	var bankKeeper bankkeeper.Keeper
 	err = depinject.Inject(
 		depinject.Configs(
 			AppConfig(),
+			runtime.DefaultServiceBindings(),
 			depinject.Supply(log.NewNopLogger()),
 			depinject.Provide(
 				codec.ProvideInterfaceRegistry,
@@ -111,7 +103,6 @@ func TestSimsAppV2(t *testing.T) {
 		&bankKeeper,
 	)
 	require.NoError(t, err)
-
 	tCfg := cli.NewConfigFromFlags().With(t, 1, nil)
 
 	appStateFn := simtestutil.AppStateFn(
@@ -179,7 +170,7 @@ func TestSimsAppV2(t *testing.T) {
 		}
 	}
 	// register all msg factories
-	factoryRegistry := simsx.NewUniqueTypeRegistry()
+	factoryRegistry := simsx.NewUnorderedRegistry()
 	for _, m := range app.ModuleManager().Modules() {
 		switch xm := m.(type) {
 		case HasWeightedOperationsX:
@@ -187,12 +178,6 @@ func TestSimsAppV2(t *testing.T) {
 		case HasWeightedOperationsXWithProposals:
 			xm.WeightedOperationsX(weights, factoryRegistry, proposalRegistry.Iterator(), nil)
 		}
-	}
-	msgTypes := maps.Keys(factoryRegistry)
-	sort.Strings(msgTypes)
-	for _, k := range msgTypes {
-		x := factoryRegistry[k]
-		fmt.Printf("factory: %d -> %s\n", x.Weight, k)
 	}
 	const ( // todo: read from CLI instead
 		numBlocks     = 1200 // 500 default
@@ -206,7 +191,7 @@ func TestSimsAppV2(t *testing.T) {
 		txTotalCounter   int
 	)
 	futureOpsReg := newFutureOpsRegistry()
-	msgFactoriesFn := NextFactoryFn(factoryRegistry, r)
+	msgFactoriesFn := NextFactoryFn(*factoryRegistry, r)
 
 	for i := 0; i < numBlocks; i++ {
 		if len(activeValidatorSet) == 0 {
@@ -560,19 +545,12 @@ func (h *ValSetHistory) MissBehaviour(r *rand.Rand) []comet.Evidence {
 	return []comet.Evidence{evidence}
 }
 
-func NextFactoryFn(s simsx.UniqueTypeRegistry, r *rand.Rand) func() simsx.SimMsgFactoryX {
-	factories := maps.Values(s)
-	slices.SortFunc(factories, func(a, b simsx.WeightedFactory) int { // sort to make deterministic
-		return strings.Compare(sdk.MsgTypeURL(a.Factory.MsgType()), sdk.MsgTypeURL(b.Factory.MsgType()))
-	})
-	factCount := len(factories)
-	r.Shuffle(factCount, func(i, j int) {
-		factories[i], factories[j] = factories[j], factories[i]
-	})
+func NextFactoryFn(factories []simsx.WeightedFactory, r *rand.Rand) func() simsx.SimMsgFactoryX {
 	var totalWeight int
 	for k := range factories {
 		totalWeight += k
 	}
+	factCount := len(factories)
 	return func() simsx.SimMsgFactoryX {
 		// this is copied from old sims WeightedOperations.getSelectOpFn
 		x := r.Intn(totalWeight)

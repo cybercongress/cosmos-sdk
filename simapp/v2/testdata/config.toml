@@ -54,7 +54,7 @@ db_backend = "goleveldb"
 db_dir = "data"
 
 # Output level for logging, including package level options
-log_level = "info"
+log_level = "*:warn,p2p:info,state:info"
 
 # Output format: 'plain' (colored text) or 'json'
 log_format = "plain"
@@ -189,7 +189,7 @@ tls_cert_file = ""
 tls_key_file = ""
 
 # pprof listen address (https://golang.org/pkg/net/http/pprof)
-pprof_laddr = ""
+pprof_laddr = "localhost:6060"
 
 #######################################################
 ###       gRPC Server Configuration Options         ###
@@ -468,7 +468,7 @@ timeout_precommit_delta = "500ms"
 # height (this gives us a chance to receive some more precommits, even
 # though we already have +2/3).
 # Set to 0 if you want to make progress as soon as the node has all the precommits.
-timeout_commit = "1s"
+timeout_commit = "5s"
 
 # Deprecated: set `timeout_commit` to 0 instead.
 skip_timeout_commit = false
@@ -522,11 +522,6 @@ compact = false
 # it is too much of an overhead to try compaction every block. But it should also not be a very
 # large multiple of your retain height as it might occur bigger overheads.
 compaction_interval = "1000"
-
-# Hash of the Genesis file (as hex string), passed to CometBFT via the command line.
-# If this hash mismatches the hash that CometBFT computes on the genesis file,
-# the node is not able to boot.
-genesis_hash = ""
 
 [storage.pruning]
 

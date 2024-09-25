@@ -16,9 +16,14 @@ trace = false
 # standalone starts the application without the CometBFT node. The node should be started separately.
 standalone = false
 
+# mempool defines the configuration for the SDK built-in app-side mempool implementations.
+[comet.mempool]
+# max-txs defines the maximum number of transactions that can be in the mempool. A value of 0 indicates an unbounded mempool, a negative value disables the app-side mempool.
+max-txs = -1
+
 [grpc]
 # Enable defines if the gRPC server should be enabled.
-enable = true
+enable = false
 # Address defines the gRPC server address to bind to.
 address = 'localhost:9090'
 # MaxRecvMsgSize defines the max message size in bytes the server can receive.
@@ -28,32 +33,36 @@ max-recv-msg-size = 10485760
 # The default value is math.MaxInt32.
 max-send-msg-size = 2147483647
 
+[server]
+# minimum-gas-prices defines the price which a validator is willing to accept for processing a transaction. A transaction's fees must meet the minimum of any denomination specified in this config (e.g. 0.25token1;0.0001token2).
+minimum-gas-prices = '0stake'
+
 [store]
 # The type of database for application and snapshots databases.
 app-db-backend = 'goleveldb'
 
 [store.options]
-# State storage database type. Currently we support: 0 for SQLite, 1 for Pebble
-ss-type = 0
-# State commitment database type. Currently we support:0 for iavl, 1 for iavl v2
-sc-type = 0
+# SState storage database type. Currently we support: "sqlite", "pebble" and "rocksdb"
+ss-type = 'sqlite'
+# State commitment database type. Currently we support: "iavl" and "iavl-v2"
+sc-type = 'iavl'
 
 # Pruning options for state storage
 [store.options.ss-pruning-option]
 # Number of recent heights to keep on disk.
 keep-recent = 2
 # Height interval at which pruned heights are removed from disk.
-interval = 1
+interval = 100
 
 # Pruning options for state commitment
 [store.options.sc-pruning-option]
 # Number of recent heights to keep on disk.
 keep-recent = 2
 # Height interval at which pruned heights are removed from disk.
-interval = 1
+interval = 100
 
 [store.options.iavl-config]
 # CacheSize set the size of the iavl tree cache.
-cache_size = 100000
+cache-size = 100000
 # If true, the tree will work like no fast storage and always not upgrade fast storage.
-skip_fast_storage_upgrade = true
+skip-fast-storage-upgrade = true
