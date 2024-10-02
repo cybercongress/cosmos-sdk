@@ -1,11 +1,9 @@
 package simapp
 
 import (
-	"bytes"
 	"context"
 	addresscodec "cosmossdk.io/core/address"
 	"cosmossdk.io/core/appmodule"
-	"cosmossdk.io/core/appmodule/v2"
 	"cosmossdk.io/core/comet"
 	corecontext "cosmossdk.io/core/context"
 	"cosmossdk.io/core/server"
@@ -16,38 +14,31 @@ import (
 	"cosmossdk.io/runtime/v2"
 	serverv2 "cosmossdk.io/server/v2"
 	cometbfttypes "cosmossdk.io/server/v2/cometbft/types"
-	bankkeeper "cosmossdk.io/x/bank/keeper"
 	consensustypes "cosmossdk.io/x/consensus/types"
-	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	cmtproto "github.com/cometbft/cometbft/api/cometbft/types/v1"
 	cmttypes "github.com/cometbft/cometbft/types"
-	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
-	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/cosmos/cosmos-sdk/simsx"
+	simsxv2 "github.com/cosmos/cosmos-sdk/simsx/v2"
 	"github.com/cosmos/cosmos-sdk/std"
-	"github.com/cosmos/cosmos-sdk/testutil/sims"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
 	"github.com/cosmos/cosmos-sdk/x/simulation"
 	"github.com/cosmos/cosmos-sdk/x/simulation/client/cli"
-	"github.com/huandu/skiplist"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/maps"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"slices"
-	"testing"
+	testing "testing"
 	"time"
 )
 
-type T = transaction.Tx
+type Tx = transaction.Tx
 type (
 	HasWeightedOperationsX              = simsx.HasWeightedOperationsX
 	HasWeightedOperationsXWithProposals = simsx.HasWeightedOperationsXWithProposals
@@ -62,6 +53,16 @@ const (
 	timeRangePerBlock = maxTimePerBlock - minTimePerBlock
 )
 
+type AuthKeeper interface {
+	simsx.ModuleAccountSource
+	simsx.AccountSource
+}
+
+type BankKeeper interface {
+	simsx.BalanceSource
+	GetBlockedAddresses() map[string]bool
+}
+
 func TestSimsAppV2(t *testing.T) {
 	DefaultNodeHome = t.TempDir()
 	currentDir, err := os.Getwd()
@@ -72,15 +73,12 @@ func TestSimsAppV2(t *testing.T) {
 	v.Set("home", DefaultNodeHome)
 	//v.Set("store.app-db-backend", "memdb") // todo: I had added this new type to speed up testing. Does it make sense this way?
 	logger := log.NewTestLoggerInfo(t)
-	app := NewSimApp[T](logger, v)
+	app := NewSimApp[Tx](logger, v)
 
-	var authKeeper interface {
-		simsx.ModuleAccountSource
-		simsx.AccountSource
-	}
 	var validatorAddressCodec addresscodec.ValidatorAddressCodec
 	var addressCodec addresscodec.Codec
-	var bankKeeper bankkeeper.Keeper
+	var bankKeeper BankKeeper
+	var authKeeper AuthKeeper
 	err = depinject.Inject(
 		depinject.Configs(
 			AppConfig(),
@@ -121,8 +119,7 @@ func TestSimsAppV2(t *testing.T) {
 
 	appState, accounts, chainID, genesisTimestamp := appStateFn(r, accounts, tCfg)
 
-	appStore := app.GetStore().(cometbfttypes.Store)
-	genesisReq := &server.BlockRequest[T]{
+	genesisReq := &server.BlockRequest[Tx]{
 		Height:    0, // todo: or 1?
 		Time:      genesisTimestamp,
 		Hash:      make([]byte, 32),
@@ -130,10 +127,8 @@ func TestSimsAppV2(t *testing.T) {
 		AppHash:   make([]byte, 32),
 		IsGenesis: true,
 	}
-	ctx, done := context.WithCancel(context.Background())
-	defer done()
 
-	genesisCtx := context.WithValue(ctx, corecontext.CometParamsInitInfoKey, &consensustypes.MsgUpdateParams{
+	initialConsensusParams := &consensustypes.MsgUpdateParams{
 		Block: &cmtproto.BlockParams{
 			MaxBytes: 200000,
 			MaxGas:   100_000_000,
@@ -144,16 +139,22 @@ func TestSimsAppV2(t *testing.T) {
 			MaxBytes:        10000,
 		},
 		Validator: &cmtproto.ValidatorParams{PubKeyTypes: []string{cmttypes.ABCIPubKeyTypeEd25519, cmttypes.ABCIPubKeyTypeSecp256k1}},
-	})
+	}
+	ctx, done := context.WithCancel(context.Background())
+	defer done()
+	genesisCtx := context.WithValue(ctx, corecontext.CometParamsInitInfoKey, initialConsensusParams)
 
-	initRsp, genesisState, err := app.InitGenesis(genesisCtx, genesisReq, appState, &genericTxDecoder[T]{txConfig: app.TxConfig()})
+	initRsp, genesisState, err := app.InitGenesis(genesisCtx, genesisReq, appState, simsxv2.NewGenericTxDecoder[Tx](app.TxConfig()))
 	require.NoError(t, err)
-	activeValidatorSet := NewValSet().Update(initRsp.ValidatorUpdates)
-	valsetHistory := NewValSetHistory(150) // todo: configure
+	activeValidatorSet := simsxv2.NewValSet().Update(initRsp.ValidatorUpdates)
+	valsetHistory := simsxv2.NewValSetHistory(150) // todo: configure
 	valsetHistory.Add(genesisReq.Time, activeValidatorSet)
+
+	appStore := app.GetStore().(cometbfttypes.Store)
 	require.NoError(t, appStore.SetInitialVersion(genesisReq.Height))
 	changeSet, err := genesisState.GetStateChanges()
 	require.NoError(t, err)
+
 	stateRoot, err := appStore.Commit(&store.Changeset{Changes: changeSet})
 	require.NoError(t, err)
 
@@ -179,19 +180,47 @@ func TestSimsAppV2(t *testing.T) {
 			xm.WeightedOperationsX(weights, factoryRegistry, proposalRegistry.Iterator(), nil)
 		}
 	}
+	msgFactoriesFn := simsxv2.NextFactoryFn(*factoryRegistry, r)
+	doMainLoop(t, ctx, genesisTimestamp, msgFactoriesFn, r, activeValidatorSet, valsetHistory, stateRoot, chainID, app, authKeeper, bankKeeper, accounts, appStore)
+}
+
+type chainState struct {
+	chainID            string
+	blockTime          time.Time
+	activeValidatorSet simsxv2.WeightedValidators
+	valsetHistory      *simsxv2.ValSetHistory
+	stateRoot          store.Hash
+	app                *SimApp[Tx]
+	appStore           cometbfttypes.Store
+}
+
+func doMainLoop(
+	t *testing.T,
+	ctx context.Context,
+	blockTime time.Time,
+	msgFactoriesFn func() simsx.SimMsgFactoryX,
+	r *rand.Rand,
+	activeValidatorSet simsxv2.WeightedValidators,
+	valsetHistory *simsxv2.ValSetHistory,
+	stateRoot store.Hash,
+	chainID string,
+	app *SimApp[Tx],
+	authKeeper AuthKeeper,
+	bankKeeper simsx.BalanceSource,
+	accounts []simtypes.Account,
+	appStore cometbfttypes.Store,
+) {
 	const ( // todo: read from CLI instead
 		numBlocks     = 1200 // 500 default
 		maxTXPerBlock = 650  // 200 default
 	)
 
 	rootReporter := simsx.NewBasicSimulationReporter()
-	blockTime := genesisTimestamp
 	var (
 		txSkippedCounter int
 		txTotalCounter   int
 	)
-	futureOpsReg := newFutureOpsRegistry()
-	msgFactoriesFn := NextFactoryFn(*factoryRegistry, r)
+	futureOpsReg := simsxv2.NewFutureOpsRegistry()
 
 	for i := 0; i < numBlocks; i++ {
 		if len(activeValidatorSet) == 0 {
@@ -201,7 +230,7 @@ func TestSimsAppV2(t *testing.T) {
 		blockTime = blockTime.Add(time.Duration(minTimePerBlock) * time.Second)
 		blockTime = blockTime.Add(time.Duration(int64(r.Intn(int(timeRangePerBlock)))) * time.Second)
 		valsetHistory.Add(blockTime, activeValidatorSet)
-		blockReqN := &server.BlockRequest[T]{
+		blockReqN := &server.BlockRequest[Tx]{
 			Height:  uint64(2 + i),
 			Time:    blockTime,
 			Hash:    stateRoot,
@@ -211,10 +240,10 @@ func TestSimsAppV2(t *testing.T) {
 		cometInfo := comet.Info{
 			ValidatorsHash:  nil,
 			Evidence:        valsetHistory.MissBehaviour(r),
-			ProposerAddress: activeValidatorSet[0].addr,
+			ProposerAddress: activeValidatorSet[0].Address,
 			LastCommit:      activeValidatorSet.NewCommitInfo(r),
 		}
-		fOps, pos := futureOpsReg.findScheduled(blockTime), 0
+		fOps, pos := futureOpsReg.FindScheduled(blockTime), 0
 		nextFactoryFn := func() simsx.SimMsgFactoryX {
 			if pos < len(fOps) {
 				pos++
@@ -225,7 +254,7 @@ func TestSimsAppV2(t *testing.T) {
 		ctx = context.WithValue(ctx, corecontext.CometInfoKey, cometInfo) // required for ContextAwareCometInfoService
 		resultHandlers := make([]simsx.SimDeliveryResultHandler, 0, maxTXPerBlock)
 		var txPerBlockCounter int
-		blockRsp, updates, err := app.DeliverSims(ctx, blockReqN, func(ctx context.Context) (T, bool) {
+		blockRsp, updates, err := app.DeliverSims(ctx, blockReqN, func(ctx context.Context) (Tx, bool) {
 			testData := simsx.NewChainDataSource(ctx, r, authKeeper, bankKeeper, app.txConfig.SigningContext().AddressCodec(), accounts...)
 			for txPerBlockCounter < maxTXPerBlock {
 				txPerBlockCounter++
@@ -246,14 +275,14 @@ func TestSimsAppV2(t *testing.T) {
 				reporter.Success(msg)
 				require.NoError(t, reporter.Close())
 
-				tx, err := buildTestTX(ctx, authKeeper, signers, msg, r, app.txConfig, chainID)
+				tx, err := simsxv2.BuildTestTX(ctx, authKeeper, signers, msg, r, app.txConfig, chainID)
 				require.NoError(t, err)
 				return tx, false
 			}
 			return nil, true
 		})
 		require.NoError(t, err)
-		changeSet, err = updates.GetStateChanges()
+		changeSet, err := updates.GetStateChanges()
 		require.NoError(t, err)
 		stateRoot, err = appStore.Commit(&store.Changeset{Changes: changeSet})
 		require.NoError(t, err)
@@ -269,86 +298,6 @@ func TestSimsAppV2(t *testing.T) {
 	fmt.Printf("Tx total: %d skipped: %d\n", txTotalCounter, txSkippedCounter)
 }
 
-type futureOpsRegistry struct {
-	list *skiplist.SkipList
-}
-
-var _ skiplist.Comparable = timeComparator{}
-
-// used for skiplist
-type timeComparator struct {
-}
-
-func (t timeComparator) Compare(lhs, rhs interface{}) int {
-	return lhs.(time.Time).Compare(rhs.(time.Time))
-}
-
-func (t timeComparator) CalcScore(key interface{}) float64 {
-	return float64(key.(time.Time).UnixNano())
-}
-
-func newFutureOpsRegistry() *futureOpsRegistry {
-	return &futureOpsRegistry{list: skiplist.New(skiplist.Int64)}
-}
-
-func (l *futureOpsRegistry) Add(blockTime time.Time, fx simsx.SimMsgFactoryX) {
-	if fx == nil {
-		panic("message factory must not be nil")
-	}
-	if blockTime.IsZero() {
-		return
-	}
-	var scheduledOps []simsx.SimMsgFactoryX
-	if e := l.list.Get(blockTime); e != nil {
-		scheduledOps = e.Value.([]simsx.SimMsgFactoryX)
-	}
-	scheduledOps = append(scheduledOps, fx)
-	l.list.Set(blockTime, scheduledOps)
-}
-
-func (l *futureOpsRegistry) findScheduled(blockTime time.Time) []simsx.SimMsgFactoryX {
-	var r []simsx.SimMsgFactoryX
-	for {
-		e := l.list.Front()
-		if e == nil || e.Key().(time.Time).After(blockTime) {
-			break
-		}
-		r = append(r, e.Value.([]simsx.SimMsgFactoryX)...)
-		l.list.RemoveFront()
-	}
-	return r
-}
-
-func buildTestTX(
-	ctx context.Context,
-	ak simsx.AccountSource,
-	senders []simsx.SimAccount,
-	msg sdk.Msg,
-	r *rand.Rand,
-	txGen client.TxConfig,
-	chainID string,
-) (sdk.Tx, error) {
-	accountNumbers := make([]uint64, len(senders))
-	sequenceNumbers := make([]uint64, len(senders))
-	for i := 0; i < len(senders); i++ {
-		acc := ak.GetAccount(ctx, senders[i].Address)
-		accountNumbers[i] = acc.GetAccountNumber()
-		sequenceNumbers[i] = acc.GetSequence()
-	}
-	fees := senders[0].LiquidBalance().RandFees()
-	return sims.GenSignedMockTx(
-		r,
-		txGen,
-		[]sdk.Msg{msg},
-		fees,
-		sims.DefaultGenTxGas,
-		chainID,
-		accountNumbers,
-		sequenceNumbers,
-		Collect(senders, func(a simsx.SimAccount) cryptotypes.PrivKey { return a.PrivKey })...,
-	)
-}
-
 func toSimsModule(modules map[string]appmodule.AppModule) []module.AppModuleSimulation {
 	r := make([]module.AppModuleSimulation, 0, len(modules))
 	names := maps.Keys(modules)
@@ -359,208 +308,4 @@ func toSimsModule(modules map[string]appmodule.AppModule) []module.AppModuleSimu
 		}
 	}
 	return r
-}
-
-var _ transaction.Codec[transaction.Tx] = &genericTxDecoder[transaction.Tx]{}
-
-// todo: this is the same as in commands
-type genericTxDecoder[T transaction.Tx] struct {
-	txConfig client.TxConfig
-}
-
-// Decode implements transaction.Codec.
-func (t *genericTxDecoder[T]) Decode(bz []byte) (T, error) {
-	var out T
-	tx, err := t.txConfig.TxDecoder()(bz)
-	if err != nil {
-		return out, err
-	}
-
-	var ok bool
-	out, ok = tx.(T)
-	if !ok {
-		return out, errors.New("unexpected Tx type")
-	}
-
-	return out, nil
-}
-
-// DecodeJSON implements transaction.Codec.
-func (t *genericTxDecoder[T]) DecodeJSON(bz []byte) (T, error) {
-	var out T
-	tx, err := t.txConfig.TxJSONDecoder()(bz)
-	if err != nil {
-		return out, err
-	}
-
-	var ok bool
-	out, ok = tx.(T)
-	if !ok {
-		return out, errors.New("unexpected Tx type")
-	}
-
-	return out, nil
-}
-
-func Collect[T, E any](source []T, f func(a T) E) []E {
-	r := make([]E, len(source))
-	for i, v := range source {
-		r[i] = f(v)
-	}
-	return r
-}
-
-// NewValSet constructor
-func NewValSet() WeightedValidators {
-	return make(WeightedValidators, 0)
-}
-
-type WeightedValidators []WeightedValidator
-
-func (v WeightedValidators) Update(updates []appmodulev2.ValidatorUpdate) WeightedValidators {
-	if len(updates) == 0 {
-		return v
-	}
-	const truncatedSize = 20
-	valUpdates := simsx.Collect(updates, func(u appmodulev2.ValidatorUpdate) WeightedValidator {
-		hash := sha256.Sum256(u.PubKey)
-		return WeightedValidator{power: u.Power, addr: hash[:truncatedSize]}
-	})
-	newValset := slices.Clone(v)
-	for _, u := range valUpdates {
-		pos := slices.IndexFunc(newValset, func(val WeightedValidator) bool {
-			return bytes.Equal(u.addr, val.addr)
-		})
-		if pos == -1 {
-			if u.power > 0 {
-				newValset = append(newValset, u)
-			}
-			continue
-		}
-		if u.power == 0 {
-			newValset = append(newValset[0:pos], newValset[pos+1:]...)
-			continue
-		}
-		newValset[pos].power = u.power
-	}
-
-	// sort vals by power
-	slices.SortFunc(newValset, func(a, b WeightedValidator) int {
-		switch {
-		case a.power < b.power:
-			return 1
-		case a.power > a.power:
-			return -1
-		default:
-			return bytes.Compare(a.addr, b.addr)
-		}
-	})
-	return newValset
-}
-
-// NewCommitInfo build Comet commit info for the validator set
-func (v WeightedValidators) NewCommitInfo(r *rand.Rand) comet.CommitInfo {
-	// todo: refactor to transition matrix?
-	if r.Intn(10) == 0 {
-		v[rand.Intn(len(v))].Offline = r.Intn(2) == 0
-	}
-	votes := make([]comet.VoteInfo, 0, len(v))
-	for i := range v {
-		if v[i].Offline {
-			continue
-		}
-		votes = append(votes, comet.VoteInfo{
-			Validator:   comet.Validator{Address: v[i].addr, Power: v[i].power},
-			BlockIDFlag: comet.BlockIDFlagCommit,
-		})
-	}
-	return comet.CommitInfo{Round: int32(r.Uint32()), Votes: votes}
-}
-
-func (v WeightedValidators) TotalPower() int64 {
-	var r int64
-	for _, val := range v {
-		r += val.power
-	}
-	return r
-}
-
-type WeightedValidator struct {
-	power   int64
-	addr    []byte
-	Offline bool
-}
-
-func must[T any](r T, err error) T {
-	if err != nil {
-		panic(err)
-	}
-	return r
-}
-
-type historicValSet struct {
-	blockTime time.Time
-	vals      WeightedValidators
-}
-type ValSetHistory struct {
-	maxElements int
-	blockOffset int
-	vals        []historicValSet
-}
-
-func NewValSetHistory(maxElements int) *ValSetHistory {
-	return &ValSetHistory{
-		maxElements: maxElements,
-		blockOffset: 1, // start at height 1
-		vals:        make([]historicValSet, 0, maxElements),
-	}
-}
-
-func (h *ValSetHistory) Add(blockTime time.Time, vals WeightedValidators) {
-	newEntry := historicValSet{blockTime: blockTime, vals: vals}
-	if len(h.vals) >= h.maxElements {
-		h.vals = append(h.vals[1:], newEntry)
-		h.blockOffset++
-		return
-	}
-	h.vals = append(h.vals, newEntry)
-}
-
-func (h *ValSetHistory) MissBehaviour(r *rand.Rand) []comet.Evidence {
-	if r.Intn(100) != 0 { // 1% chance
-		return nil
-	}
-	n := r.Intn(len(h.vals))
-	badVal := simsx.OneOf(r, h.vals[n].vals)
-	evidence := comet.Evidence{
-		Type:             comet.DuplicateVote,
-		Validator:        comet.Validator{Address: badVal.addr, Power: badVal.power},
-		Height:           int64(h.blockOffset + n),
-		Time:             h.vals[n].blockTime,
-		TotalVotingPower: h.vals[n].vals.TotalPower(),
-	}
-	if otherEvidence := h.MissBehaviour(r); otherEvidence != nil {
-		return append([]comet.Evidence{evidence}, otherEvidence...)
-	}
-	return []comet.Evidence{evidence}
-}
-
-func NextFactoryFn(factories []simsx.WeightedFactory, r *rand.Rand) func() simsx.SimMsgFactoryX {
-	var totalWeight int
-	for k := range factories {
-		totalWeight += k
-	}
-	factCount := len(factories)
-	return func() simsx.SimMsgFactoryX {
-		// this is copied from old sims WeightedOperations.getSelectOpFn
-		x := r.Intn(totalWeight)
-		for i := 0; i < factCount; i++ {
-			if x <= int(factories[i].Weight) {
-				return factories[i].Factory
-			}
-			x -= int(factories[i].Weight)
-		}
-		// shouldn't happen
-		return factories[0].Factory
-	}
 }
