@@ -6,9 +6,10 @@ import (
 	"cosmossdk.io/core/server"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/core/transaction"
+	"iter"
 )
 
-func (s STF[T]) DoSimsTXs(simsBuilder func(ctx context.Context) (T, bool)) doInBlockDeliveryFn[T] {
+func (s STF[T]) DoSimsTXs(simsBuilder func(ctx context.Context) iter.Seq[T]) doInBlockDeliveryFn[T] {
 	return func(
 		ctx context.Context,
 		_ []T,
@@ -17,11 +18,11 @@ func (s STF[T]) DoSimsTXs(simsBuilder func(ctx context.Context) (T, bool)) doInB
 	) ([]server.TxResult, error) {
 		simsCtx := context.WithValue(ctx, "sims.header.time", hi.Time) // using string key to decouple
 		var results []server.TxResult
-		for tx, exit := simsBuilder(simsCtx); !exit; tx, exit = simsBuilder(simsCtx) {
-			if err := isCtxCancelled(ctx); err != nil {
+		for tx := range simsBuilder(simsCtx) {
+			if err := isCtxCancelled(simsCtx); err != nil {
 				return nil, err
 			}
-			results = append(results, s.deliverTx(ctx, newState, tx, transaction.ExecModeFinalize, hi))
+			results = append(results, s.deliverTx(simsCtx, newState, tx, transaction.ExecModeFinalize, hi))
 		}
 		return results, nil
 	}

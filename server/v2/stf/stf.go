@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 
 	appmodulev2 "cosmossdk.io/core/appmodule/v2"
 	corecontext "cosmossdk.io/core/context"
@@ -86,7 +87,7 @@ func (s STF[T]) DeliverSims(
 	ctx context.Context,
 	block *server.BlockRequest[T],
 	state store.ReaderMap,
-	simsBuilder func(ctx context.Context) (T, bool),
+	simsBuilder func(ctx context.Context) iter.Seq[T],
 ) (blockResult *server.BlockResponse, newState store.WriterMap, err error) {
 	return s.deliverBlock(ctx, block, state, s.DoSimsTXs(simsBuilder))
 }

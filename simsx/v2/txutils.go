@@ -18,7 +18,7 @@ func BuildTestTX(
 	senders []simsx.SimAccount,
 	msg types.Msg,
 	r *rand.Rand,
-	txGen client.TxConfig,
+	txConfig client.TxConfig,
 	chainID string,
 ) (types.Tx, error) {
 	accountNumbers := make([]uint64, len(senders))
@@ -31,7 +31,7 @@ func BuildTestTX(
 	fees := senders[0].LiquidBalance().RandFees()
 	return sims.GenSignedMockTx(
 		r,
-		txGen,
+		txConfig,
 		[]types.Msg{msg},
 		fees,
 		sims.DefaultGenTxGas,

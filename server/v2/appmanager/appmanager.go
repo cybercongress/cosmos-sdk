@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 
 	"cosmossdk.io/core/server"
 	corestore "cosmossdk.io/core/store"
@@ -44,7 +45,7 @@ func (a AppManager[T]) InitGenesis(
 	txDecoder transaction.Codec[T],
 ) (*server.BlockResponse, corestore.WriterMap, error) {
 	var genTxs []T
-	genesisState, err := a.initGenesis(
+	genesisStateChanges, err := a.initGenesis(
 		ctx,
 		bytes.NewBuffer(initGenesisJSON),
 		func(jsonTx json.RawMessage) error {
@@ -62,7 +63,7 @@ func (a AppManager[T]) InitGenesis(
 	// run block
 	blockRequest.Txs = genTxs
 
-	blockResponse, blockZeroState, err := a.stf.DeliverBlock(ctx, blockRequest, genesisState)
+	blockResponse, blockZeroState, err := a.stf.DeliverBlock(ctx, blockRequest, genesisStateChanges)
 	if err != nil {
 		return blockResponse, nil, fmt.Errorf("failed to deliver block %d: %w", blockRequest.Height, err)
 	}
@@ -73,12 +74,12 @@ func (a AppManager[T]) InitGenesis(
 		return nil, nil, fmt.Errorf("failed to get block zero state changes: %w", err)
 	}
 
-	err = genesisState.ApplyStateChanges(stateChanges)
+	err = genesisStateChanges.ApplyStateChanges(stateChanges)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to apply block zero state changes to genesis state: %w", err)
 	}
 
-	return blockResponse, genesisState, err
+	return blockResponse, genesisStateChanges, err
 }
 
 // ExportGenesis exports the genesis state of the application.
@@ -113,7 +114,7 @@ func (a AppManager[T]) DeliverBlock(
 func (a AppManager[T]) DeliverSims(
 	ctx context.Context,
 	block *server.BlockRequest[T],
-	simsBuilder func(ctx context.Context) (T, bool),
+	simsBuilder func(ctx context.Context) iter.Seq[T],
 ) (*server.BlockResponse, corestore.WriterMap, error) {
 	latestVersion, currentState, err := a.db.StateLatest()
 	if err != nil {
