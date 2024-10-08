@@ -180,3 +180,7 @@ func (f failingInterfaceRegistry) ListImplementations(ifaceTypeURL string) []str
 func (f failingInterfaceRegistry) EnsureRegistered(iface interface{}) error {
 	panic("cannot be called")
 }
+
+func (f failingInterfaceRegistry) RegisterCustomTypeURL(iface interface{}, typeURL string, impl proto.Message) {
+	panic("cannot be called")
+}
