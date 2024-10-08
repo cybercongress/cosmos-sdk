@@ -54,6 +54,8 @@ type InterfaceRegistry interface {
 
 	// EnsureRegistered ensures there is a registered interface for the given concrete type.
 	EnsureRegistered(iface interface{}) error
+
+	RegisterCustomTypeURL(iface interface{}, typeURL string, impl proto.Message)
 }
 
 // UnpackInterfacesMessage is meant to extend protobuf types (which implement
